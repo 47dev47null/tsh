@@ -11,6 +11,7 @@
 #define PIPE        '|'
 #define REDIR_IN    '<'
 #define REDIR_OUT   '>'
+#define BACKGROUND  '&'
 #define INITSIZE    8               /* initial argv size in process */
 
 /* A process is a single process. */
@@ -26,6 +27,7 @@ typedef struct job
     char *cmd;                      /* origin command, used for messages */
     SIMPLEQ_HEAD(, process) head;   /* list of processes in this job */
     int in, out;                    /* standard I/O channels */
+    int bg;                         /* true if it is a background job */
 } job;
 
 job *j = NULL;
@@ -125,8 +127,9 @@ void launch_job(int bg)
 
         default:
             /* parent process */
-            if (waitpid(pid, NULL, 0) == -1)
-                errExit("waitpid");
+            if (!bg)
+                if (waitpid(pid, NULL, 0) == -1)
+                    errExit("waitpid");
             break;
         }
 
@@ -210,6 +213,24 @@ int create_job(void)
     if ((read = getline(&j->cmd, &len, stdin)) == -1)
         fatal("getline");
 
+    if (j->cmd[0] == '\n')
+        return -1;
+
+    sp = strrchr(j->cmd, BACKGROUND);
+    ep = strchr(j->cmd, '\n');
+    if (sp)
+    {
+        for (r = sp + 1; r < ep; r++)
+            if (!isspace(*r))
+                break;
+        j->bg = (r == ep) ? 1 : 0;
+    }
+    else
+        j->bg = 0;
+
+    if (j->bg)
+        *sp = '\0';             /* chop background director */
+
 #ifdef DEBUG
     printf("%-30s: %s", "original cmd", j->cmd);
 #endif
@@ -221,7 +242,6 @@ int create_job(void)
             errExit("chdir");
         return -1;
     }
-    
     if (j->cmd[0] == 'q' && isspace(j->cmd[1]))
         return 1;                   /* signal to exit */
 
@@ -345,7 +365,7 @@ int main(void)
         rc = create_job();
         if(rc == 0)
         {
-            launch_job(0);
+            launch_job(j->bg);
             teardown_job();
         }
         else if (rc == 1)
